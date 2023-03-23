@@ -1,0 +1,75 @@
+library(Seurat)
+library(patchwork)
+library(tidyverse)
+library(msigdbr)
+library(fgsea)
+library(clustifyr)
+library(ComplexHeatmap)
+library(escape)
+library(corrplot)
+library(dittoSeq)
+library(cowplot)
+library(clustree)
+library(rafalib)
+library(scPred)
+library(enrichR)
+library(ggpubr)
+library(GSEABase)
+library(SummarizedExperiment)
+library(SingleR)
+library(ggsci)
+library(magrittr)
+
+
+GS.hallmark <- getGeneSets(library = 'H')
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+
+GSE103322 <- read.table("GSE103322.txt", sep = "\t")
+GSE <- data.frame(t(GSE103322))
+rownames(GSE) <- GSE[,1]
+GSE <- GSE[,-1]
+colnames(GSE) <- GSE[1,]
+GSE <- GSE[-1,]
+GSE <- GSE %>%
+  filter(`classified  as cancer cell` == "1")
+GSE.TPM <- GSE[,6:2215] %>%
+  mutate_all(as.numeric)
+GSE.TPM <- as.matrix(t(GSE.TPM))
+GSE.meta <- GSE[,1:5]
+GSE <- CreateSeuratObject(GSE.TPM, project = "GSE103322", assay = "RNA", names.field = 1, names.delim = "_", meta.data = GSE.meta)
+
+
+GSE <- NormalizeData(GSE)
+GSE <- FindVariableFeatures(GSE, selection.method = "vst")
+GSE <- ScaleData(GSE)
+GSE <-RunPCA(GSE, npcs = 50)
+GSE <- RunUMAP(GSE, dims = 1:50)
+GSE <- FindNeighbors(GSE, dims = 1:50, k.param = 60, prune.SNN = 1/15)
+
+
+GSE <- CellCycleScoring(GSE, s.features = s.genes, g2m.features = g2m.genes, set.ident = T)
+GSE.enrich <- enrichIt(obj = GSE, gene.sets = GS.hallmark, groups = 1000, cores = 4)
+GSE <- Seurat::AddMetaData(GSE, GSE.enrich)
+
+# Figure S2A
+
+tmp <- GSE@meta.data %>%
+  group_by(Phase) %>%
+  summarise(n())
+
+comp <- list(c("G1", "S"), c("G1", "G2M"), c("S", "G2M"))
+
+p1 <- ggboxplot(GSE@meta.data, x= "Phase", y = "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", fill = "Phase", palette = "jco", add = "jitter", outlier.shape = NA) +
+  stat_compare_means(method = "kruskal.test") +
+  stat_compare_means(comparisons = comp, method = "wilcox.test")
+ 
+p2 <- ggboxplot(GSE@meta.data, x= "Phase", y = "HALLMARK_PI3K_AKT_MTOR_SIGNALING", fill = "Phase", palette = "jco", add = "jitter") +
+  stat_compare_means(method = "kruskal.test") + 
+  stat_compare_means(comparisons = comp, method = "wilcox.test") 
+ 
+print(p1+p2)
+
+
+
